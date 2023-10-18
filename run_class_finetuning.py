@@ -18,6 +18,8 @@ import torch.backends.cudnn as cudnn
 import json
 import os
 
+import wandb
+
 from pathlib import Path
 
 from timm.data.mixup import Mixup
@@ -49,7 +51,7 @@ def get_args():
     parser.set_defaults(rel_pos_bias=True)
     parser.add_argument('--abs_pos_emb', action='store_true')
     parser.set_defaults(abs_pos_emb=False)
-    parser.add_argument('--layer_scale_init_value', default=0.1, type=float, 
+    parser.add_argument('--layer_scale_init_value', default=0.1, type=float,
                         help="0.1 for base, 1e-5 for large. set 0 to disable layer scale")
 
     parser.add_argument('--input_size', default=224, type=int,
@@ -197,6 +199,9 @@ def get_args():
 
     parser.add_argument('--enable_deepspeed', action='store_true', default=False)
 
+    # Yu-Gi-Oh! parameters
+    parser.add_argument('--card_type', type=str)
+
     known_args, _ = parser.parse_known_args()
 
     if known_args.enable_deepspeed:
@@ -221,6 +226,15 @@ def main(args, ds_init):
         utils.create_ds_config(args)
 
     print(args)
+
+    wandb.init(
+        project="beit-card-classification",
+        config={
+            "card-type": args.card_type,
+            "learning_rate": args.lr,
+            "batch_size": args.batch_size
+        }
+    )
 
     device = torch.device(args.device)
 
@@ -495,7 +509,7 @@ def main(args, ds_init):
 
         optimizer = create_optimizer(
             args, model_without_ddp, skip_list=skip_weight_decay_list,
-            get_num_layer=assigner.get_layer_id if assigner is not None else None, 
+            get_num_layer=assigner.get_layer_id if assigner is not None else None,
             get_layer_scale=assigner.get_scale if assigner is not None else None)
         loss_scaler = NativeScaler()
 
@@ -544,6 +558,7 @@ def main(args, ds_init):
             lr_schedule_values=lr_schedule_values, wd_schedule_values=wd_schedule_values,
             num_training_steps_per_epoch=num_training_steps_per_epoch, update_freq=args.update_freq,
         )
+        wandb.log(train_stats)
         if args.output_dir and args.save_ckpt:
             if (epoch + 1) % args.save_ckpt_freq == 0 or epoch + 1 == args.epochs:
                 utils.save_model(

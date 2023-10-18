@@ -10,18 +10,18 @@
 # https://github.com/facebookresearch/dino
 # --------------------------------------------------------'
 import os
+from random import normalvariate
+
 import torch
-
-from torchvision import datasets, transforms
-
+from timm.data import create_transform
 from timm.data.constants import \
     IMAGENET_DEFAULT_MEAN, IMAGENET_DEFAULT_STD, IMAGENET_INCEPTION_MEAN, IMAGENET_INCEPTION_STD
-from transforms import RandomResizedCropAndInterpolationWithTwoPic
-from timm.data import create_transform
+from torchvision import datasets, transforms
 
 from dall_e.utils import map_pixels
-from masking_generator import MaskingGenerator
 from dataset_folder import ImageFolder
+from masking_generator import MaskingGenerator
+from transforms import RandomResizedCropAndInterpolationWithTwoPic
 
 
 class DataAugmentationForBEiT(object):
@@ -72,7 +72,7 @@ class DataAugmentationForBEiT(object):
         for_patches, for_visual_tokens = self.common_transform(image)
         return \
             self.patch_transform(for_patches), self.visual_token_transform(for_visual_tokens), \
-            self.masked_position_generator()
+                self.masked_position_generator()
 
     def __repr__(self):
         repr = "(DataAugmentationForBEiT,\n"
@@ -124,6 +124,35 @@ def build_dataset(is_train, args):
     return dataset, nb_classes
 
 
+def art_cropper(img):
+    width, height = img.size
+    return img.crop((int(0.115 * width), int(0.18 * height), int(0.89 * width), int(0.71 * height)))
+
+
+def train_data_transforms(img):
+    # img = T.Resize(60, antialias=True)(img)
+    img = art_cropper(img)
+    # img = transforms.ToTensor()(img)
+    img = transforms.Resize((224, 224), antialias=True)(img)
+
+    gamma = normalvariate(mu=0.75, sigma=0.2)
+    gamma = max(gamma, 0.15)
+    gain = normalvariate(mu=1.15, sigma=0.15)
+    gain = max(gain, 0.7)
+    gain = min(gain, 1.6)
+    sat_factor = normalvariate(mu=0.8, sigma=0.15)
+    sat_factor = max(sat_factor, 0.35)
+    hue_factor = normalvariate(mu=0, sigma=0.025)
+
+    img = transforms.functional.adjust_gamma(img, gamma=gamma, gain=gain)
+    img = transforms.functional.adjust_saturation(img, saturation_factor=sat_factor)
+    # img = T.GaussianBlur(kernel_size=5, sigma=1)(img)
+    img = transforms.functional.adjust_hue(img, hue_factor=hue_factor)
+    # img = transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])(img)
+
+    return img
+
+
 def build_transform(is_train, args):
     resize_im = args.input_size > 32
     imagenet_default_mean_and_std = args.imagenet_default_mean_and_std
@@ -144,6 +173,10 @@ def build_transform(is_train, args):
             mean=mean,
             std=std,
         )
+
+        transform = transforms.Compose([train_data_transforms,
+                                        transform])
+
         if not resize_im:
             # replace RandomResizedCropAndInterpolation with
             # RandomCrop
